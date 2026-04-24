@@ -7,6 +7,13 @@ struct ProjectListView: View {
     @ObservedObject var appVM: AppViewModel
     @State private var isImporting = false
 
+    private var appVersion: String {
+        Bundle.main.object(forInfoDictionaryKey: "CFBundleShortVersionString") as? String ?? "dev"
+    }
+    private var appBuild: String {
+        Bundle.main.object(forInfoDictionaryKey: "CFBundleVersion") as? String ?? "?"
+    }
+
     var body: some View {
         VStack(spacing: 0) {
             Button {
@@ -43,6 +50,8 @@ struct ProjectListView: View {
             } else {
                 projectsList
             }
+
+            buildStamp
         }
         .fileImporter(
             isPresented: $isImporting,
@@ -52,6 +61,25 @@ struct ProjectListView: View {
             guard let url = try? result.get().first else { return }
             Task { await appVM.importMedia(url: url) }
         }
+    }
+
+    private var buildStamp: some View {
+        HStack(spacing: 4) {
+            Text("v\(appVersion)")
+                .font(.caption2.monospacedDigit())
+            Text("·")
+                .font(.caption2)
+                .foregroundStyle(.tertiary)
+            Text("build \(appBuild)")
+                .font(.caption2.monospacedDigit())
+                .textSelection(.enabled)
+        }
+        .foregroundStyle(.secondary)
+        .frame(maxWidth: .infinity)
+        .padding(.vertical, 6)
+        .padding(.horizontal, 10)
+        .background(.bar)
+        .help("App version and build. Share the build number so we know we're looking at the same binary.")
     }
 
     private var projectsList: some View {
