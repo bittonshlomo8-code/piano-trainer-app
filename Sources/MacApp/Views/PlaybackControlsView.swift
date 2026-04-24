@@ -7,14 +7,20 @@ struct PlaybackControlsView: View {
 
     var body: some View {
         HStack(spacing: 12) {
-            Picker("", selection: $vm.mode) {
-                ForEach(PlaybackMode.allCases, id: \.self) { m in
-                    Text(m.rawValue).tag(m)
-                }
+            HStack(spacing: 6) {
+                sourceToggle(
+                    label: "Audio",
+                    systemImage: "waveform",
+                    isOn: $vm.audioEnabled,
+                    help: "Play the original audio"
+                )
+                sourceToggle(
+                    label: "MIDI",
+                    systemImage: "pianokeys",
+                    isOn: $vm.midiEnabled,
+                    help: "Play the transcribed MIDI"
+                )
             }
-            .pickerStyle(.segmented)
-            .frame(width: 140)
-            .help("Switch between original audio and MIDI synthesis")
 
             Button { vm.seek(to: 0) } label: {
                 Image(systemName: "backward.end.fill")
@@ -35,6 +41,7 @@ struct PlaybackControlsView: View {
             }
             .buttonStyle(.borderless)
             .keyboardShortcut(" ", modifiers: [])
+            .disabled(!vm.audioEnabled && !vm.midiEnabled)
             .help(vm.isPlaying ? "Pause (Space)" : "Play (Space)")
 
             Button { vm.seek(to: min(vm.duration, vm.currentTime + skipSeconds)) } label: {
@@ -72,6 +79,21 @@ struct PlaybackControlsView: View {
         .padding(.horizontal, 12)
         .padding(.vertical, 8)
         .background(.regularMaterial)
+    }
+
+    private func sourceToggle(
+        label: String,
+        systemImage: String,
+        isOn: Binding<Bool>,
+        help: String
+    ) -> some View {
+        Toggle(isOn: isOn) {
+            Label(label, systemImage: systemImage)
+                .labelStyle(.titleAndIcon)
+        }
+        .toggleStyle(.button)
+        .controlSize(.small)
+        .help(help)
     }
 
     private func formatTime(_ seconds: Double) -> String {
