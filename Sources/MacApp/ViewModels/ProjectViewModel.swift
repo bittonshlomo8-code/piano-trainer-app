@@ -1,6 +1,7 @@
 import Foundation
 import SwiftUI
 import AppKit
+import UniformTypeIdentifiers
 import PianoTranscriptionKit
 
 @MainActor
@@ -10,7 +11,10 @@ final class ProjectViewModel: ObservableObject {
     @Published var isRunning = false
     @Published var runError: String?
     @Published var compareRunID: UUID?
-    @Published var modelSelection: ModelSelection = .basic
+    @Published var pipelineKind: PipelineKind = .basicSpectral
+
+    // Live progress (published during an active pipeline run)
+    @Published var progress: PipelineProgress?
 
     // Run status tracking (populated by the most recent pipeline run)
     @Published var runStartedAt: Date?
@@ -24,6 +28,8 @@ final class ProjectViewModel: ObservableObject {
     private let exporter = MIDIExporter()
     let store: ProjectStore
     private let onProjectUpdated: (Project) -> Void
+    var onRunningChanged: ((UUID, Bool) -> Void)?
+    var onRunError: ((UUID, String?) -> Void)?
 
     var selectedRun: TranscriptionRun? {
         guard let id = selectedRunID else { return nil }
@@ -48,17 +54,34 @@ final class ProjectViewModel: ObservableObject {
 
     func runTranscription() async {
         guard !isRunning else { return }
+        let kind = pipelineKind
+        guard let runner = kind.makeRunner() else {
+            runError = "\(kind.displayName) is not yet available. Pick another pipeline."
+            return
+        }
+
         isRunning = true
+        onRunningChanged?(project.id, true)
         runError = nil
+        onRunError?(project.id, nil)
+        progress = PipelineProgress(stage: .loading, fraction: 0.0)
         runStartedAt = Date()
         runDurationSeconds = nil
 
-        let selection = modelSelection
-        let pipeline = DefaultPipeline(runner: selection.makeRunner())
+        let pipeline = DefaultPipeline(runner: runner)
         let start = Date()
+        let audioURL = project.audioFileURL
+
+        // Forward progress from the background pipeline to this view model's @Published
+        // property by bridging through an AsyncStream — avoids Sendable capture issues.
+        let (stream, continuation) = AsyncStream.makeStream(of: PipelineProgress.self)
+        let progressHandler: PipelineProgressHandler = { continuation.yield($0) }
+        let forwarding = Task { @MainActor [weak self] in
+            for await update in stream { self?.progress = update }
+        }
 
         do {
-            let run = try await pipeline.run(audioURL: project.audioFileURL)
+            let run = try await pipeline.run(audioURL: audioURL, progress: progressHandler)
             runDurationSeconds = Date().timeIntervalSince(start)
             project.runs.append(run)
             selectedRunID = run.id
@@ -67,14 +90,38 @@ final class ProjectViewModel: ObservableObject {
         } catch {
             runDurationSeconds = Date().timeIntervalSince(start)
             runError = error.localizedDescription
+            onRunError?(project.id, error.localizedDescription)
         }
 
+        continuation.finish()
+        await forwarding.value
+
+        progress = nil
         isRunning = false
+        onRunningChanged?(project.id, false)
     }
 
     func exportMIDI(run: TranscriptionRun, to url: URL) throws {
         try exporter.export(run: run, to: url)
         lastMIDIExportURL = url
+    }
+
+    /// Prompts the user for a save location and writes the selected run's MIDI file.
+    /// Returns the URL that was written, or nil if the user cancelled.
+    @discardableResult
+    func promptExportMIDI(for run: TranscriptionRun) -> URL? {
+        let panel = NSSavePanel()
+        panel.allowedContentTypes = [UTType(filenameExtension: "mid") ?? .data]
+        panel.nameFieldStringValue = "\(project.name)_\(run.label).mid"
+        panel.canCreateDirectories = true
+        guard panel.runModal() == .OK, let url = panel.url else { return nil }
+        do {
+            try exportMIDI(run: run, to: url)
+            return url
+        } catch {
+            runError = "MIDI export failed: \(error.localizedDescription)"
+            return nil
+        }
     }
 
     func deleteRun(_ run: TranscriptionRun) {
@@ -91,7 +138,7 @@ final class ProjectViewModel: ObservableObject {
         guard !isDiagnosticsRunning else { return }
         isDiagnosticsRunning = true
         let snapshot = project
-        let runner = modelSelection.makeRunner()
+        let runner = pipelineKind.makeRunner() ?? BasicPianoModelRunner()
         let report = await PipelineDiagnostics.run(project: snapshot, store: store, runner: runner)
         diagnosticsReport = report
         isDiagnosticsRunning = false
@@ -108,31 +155,6 @@ final class ProjectViewModel: ObservableObject {
             let parent = url.deletingLastPathComponent()
             if fm.fileExists(atPath: parent.path) {
                 NSWorkspace.shared.open(parent)
-            }
-        }
-    }
-}
-
-// MARK: - Model selection
-
-extension ProjectViewModel {
-    enum ModelSelection: String, CaseIterable, Identifiable {
-        case basic = "Real"
-        case mock  = "Mock"
-
-        var id: String { rawValue }
-
-        var systemImage: String {
-            switch self {
-            case .basic: return "waveform"
-            case .mock:  return "die.face.3"
-            }
-        }
-
-        func makeRunner() -> any ModelRunner {
-            switch self {
-            case .basic: return BasicPianoModelRunner()
-            case .mock:  return MockModelRunner()
             }
         }
     }

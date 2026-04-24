@@ -11,20 +11,27 @@ public final class MockModelRunner: ModelRunner, @unchecked Sendable {
         self.seed = seed
     }
 
-    public func transcribe(audioURL: URL) async throws -> [MIDINote] {
+    public func transcribe(audioURL: URL, progress: PipelineProgressHandler?) async throws -> [MIDINote] {
+        progress?(PipelineProgress(stage: .loading, fraction: 0.05))
         let duration = audioDuration(url: audioURL)
 
-        // Simulate processing time
-        try await Task.sleep(nanoseconds: 500_000_000)
+        // Simulate processing in stages so the progress UI animates in tests and demos
+        progress?(PipelineProgress(stage: .analyzing, fraction: 0.35, detail: "simulated STFT"))
+        try await Task.sleep(nanoseconds: 200_000_000)
+        progress?(PipelineProgress(stage: .detecting, fraction: 0.70, detail: "simulated detection"))
+        try await Task.sleep(nanoseconds: 200_000_000)
 
-        return generateNotes(audioDuration: duration)
+        let notes = generateNotes(audioDuration: duration)
+        progress?(PipelineProgress(stage: .finalizing, fraction: 0.95, detail: "\(notes.count) notes"))
+        return notes
     }
 
     private func audioDuration(url: URL) -> Double {
-        let asset = AVURLAsset(url: url)
-        let duration = asset.duration
-        let seconds = CMTimeGetSeconds(duration)
-        return seconds.isFinite && seconds > 0 ? seconds : 30
+        if let file = try? AVAudioFile(forReading: url) {
+            let seconds = Double(file.length) / file.processingFormat.sampleRate
+            if seconds.isFinite && seconds > 0 { return seconds }
+        }
+        return 30
     }
 
     private func generateNotes(audioDuration: Double) -> [MIDINote] {

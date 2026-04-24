@@ -31,21 +31,27 @@ public final class BasicPianoModelRunner: ModelRunner, @unchecked Sendable {
 
     public init() {}
 
-    public func transcribe(audioURL: URL) async throws -> [MIDINote] {
+    public func transcribe(audioURL: URL, progress: PipelineProgressHandler?) async throws -> [MIDINote] {
         try await Task.detached(priority: .userInitiated) { [self] in
-            try self.pipeline(url: audioURL)
+            try self.pipeline(url: audioURL, progress: progress)
         }.value
     }
 
     // MARK: - Pipeline
 
-    private func pipeline(url: URL) throws -> [MIDINote] {
+    private func pipeline(url: URL, progress: PipelineProgressHandler?) throws -> [MIDINote] {
+        progress?(PipelineProgress(stage: .loading, fraction: 0.02, detail: "reading file"))
         let samples = try loadMono(url: url)
-        guard samples.count >= fftSize else { return [] }
+        guard samples.count >= fftSize else {
+            progress?(PipelineProgress(stage: .finalizing, fraction: 1.0, detail: "clip too short"))
+            return []
+        }
 
-        let frames   = stft(samples: samples)
-        let salience = harmonicSalience(frames: frames)
-        return segmentNotes(salience: salience)
+        let frames   = stft(samples: samples, progress: progress)
+        let salience = harmonicSalience(frames: frames, progress: progress)
+        progress?(PipelineProgress(stage: .detecting, fraction: 0.92, detail: "segmenting notes"))
+        let notes = segmentNotes(salience: salience)
+        return notes
     }
 
     // MARK: - Audio loading
@@ -104,7 +110,7 @@ public final class BasicPianoModelRunner: ModelRunner, @unchecked Sendable {
 
     // MARK: - STFT
 
-    private func stft(samples: [Float]) -> [[Float]] {
+    private func stft(samples: [Float], progress: PipelineProgressHandler?) -> [[Float]] {
         let n    = fftSize
         let half = n / 2
         let log2n = vDSP_Length(log2(Float(n)))
@@ -117,10 +123,18 @@ public final class BasicPianoModelRunner: ModelRunner, @unchecked Sendable {
         vDSP_hann_window(&win, vDSP_Length(n), Int32(vDSP_HANN_NORM))
 
         var result: [[Float]] = []
-        result.reserveCapacity(samples.count / hopSize)
+        let totalFrames = max(1, (samples.count - n) / hopSize + 1)
+        result.reserveCapacity(totalFrames)
 
         var pos = 0
+        var reported = 0
         while pos + n <= samples.count {
+            // STFT spans fractions 0.05 → 0.55 of the overall run
+            if result.count &- reported >= 32 {
+                let frac = 0.05 + 0.50 * Double(result.count) / Double(totalFrames)
+                progress?(PipelineProgress(stage: .analyzing, fraction: frac, detail: "frame \(result.count) / \(totalFrames)"))
+                reported = result.count
+            }
             // Windowed frame
             var frame = Array(samples[pos ..< pos + n])
             vDSP_vmul(frame, 1, win, 1, &frame, 1, vDSP_Length(n))
@@ -161,14 +175,20 @@ public final class BasicPianoModelRunner: ModelRunner, @unchecked Sendable {
         var values: [Float]  // one entry per STFT frame
     }
 
-    private func harmonicSalience(frames: [[Float]]) -> [PitchTrack] {
+    private func harmonicSalience(frames: [[Float]], progress: PipelineProgressHandler?) -> [PitchTrack] {
         guard !frames.isEmpty else { return [] }
 
         let half   = fftSize / 2
         let binHz  = sampleRate / Double(fftSize)
         let nFrames = frames.count
+        let pitches = Array(21 ... 108)
 
-        return (21 ... 108).map { pitch -> PitchTrack in
+        return pitches.enumerated().map { (idx, pitch) -> PitchTrack in
+            if idx % 8 == 0 {
+                // Harmonic salience spans 0.55 → 0.90
+                let frac = 0.55 + 0.35 * Double(idx) / Double(pitches.count)
+                progress?(PipelineProgress(stage: .analyzing, fraction: frac, detail: "pitch \(idx + 1) / \(pitches.count)"))
+            }
             let fund = 440.0 * pow(2.0, Double(pitch - 69) / 12.0)
             var vals = [Float](repeating: 0, count: nFrames)
 

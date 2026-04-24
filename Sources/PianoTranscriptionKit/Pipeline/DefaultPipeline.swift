@@ -10,8 +10,10 @@ public final class DefaultPipeline: TranscriptionPipeline, @unchecked Sendable {
         self.runner = runner
     }
 
-    public func run(audioURL: URL) async throws -> TranscriptionRun {
-        let notes = try await runner.transcribe(audioURL: audioURL)
+    public func run(audioURL: URL, progress: PipelineProgressHandler?) async throws -> TranscriptionRun {
+        progress?(PipelineProgress(stage: .loading, fraction: 0.0))
+        let notes = try await runner.transcribe(audioURL: audioURL, progress: progress)
+        progress?(PipelineProgress(stage: .finalizing, fraction: 1.0, detail: "\(notes.count) notes"))
         return TranscriptionRun(
             pipelineVersion: version,
             modelName: runner.name,
