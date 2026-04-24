@@ -204,8 +204,13 @@ final class BasicPianoModelRunnerTests: XCTestCase {
 
         let url = URL(fileURLWithPath: NSTemporaryDirectory())
             .appendingPathComponent("ptk_chord_\(UUID().uuidString).wav")
-        let file = try AVAudioFile(forWriting: url, settings: fmt.settings)
-        try file.write(from: buf)
+        // Scope the writer so its file handle is released before the runner
+        // opens the same path for reading — otherwise AVAudioFile reports length 0
+        // and the read fails with coreaudio error -50.
+        do {
+            let file = try AVAudioFile(forWriting: url, settings: fmt.settings)
+            try file.write(from: buf)
+        }
         defer { try? FileManager.default.removeItem(at: url) }
 
         let runner = BasicPianoModelRunner()

@@ -254,6 +254,13 @@ public final class BasicPianoModelRunner: ModelRunner, @unchecked Sendable {
         let onThreshold  = p95 * activationRatio
         let offThreshold = p95 * releaseRatio
 
+        // Use the loudest salience anywhere in the clip as the velocity reference
+        // so the most prominent pitch maps to a velocity near 127, and weaker
+        // sub-harmonic aliases fall off proportionally. Using p95 as the divisor
+        // caused every slightly-above-threshold pitch to saturate to 127 on
+        // sparse signals, erasing the relative prominence between notes.
+        let globalMax = max(p95, all.last ?? p95)
+
         var notes: [MIDINote] = []
 
         for track in salience {
@@ -275,8 +282,9 @@ public final class BasicPianoModelRunner: ModelRunner, @unchecked Sendable {
                         let onset  = Double(noteStart!) * frameTime
                         let dur    = Double(endIdx - noteStart!) * frameTime
                         if dur >= minDuration {
-                            // Velocity: sqrt-scaled against p95 (dynamic range compression)
-                            let vel = min(127, max(1, Int(sqrt(peak / p95) * 90) + 15))
+                            // Velocity: sqrt-scaled against the loudest salience in the clip
+                            let ratio = min(1, max(0, peak / globalMax))
+                            let vel = min(127, max(1, Int(sqrt(ratio) * 110) + 15))
                             notes.append(MIDINote(pitch: track.pitch,
                                                   onset: onset,
                                                   duration: dur,
