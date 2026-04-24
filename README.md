@@ -1,52 +1,81 @@
 # Piano Trainer
 
-A native macOS transcription workbench for piano audio.
+Native macOS piano transcription workbench.
 
 **Import → Run → Visualize → Compare → Export**
+
+---
+
+## Quick start (users)
+
+1. Download **PianoTrainer-x.y.z.dmg** from [Releases](../../releases)
+2. Open the DMG and drag **Piano Trainer** to `/Applications`
+3. First launch — bypass Gatekeeper (unsigned build):
+   - Right-click the app → **Open**, then click **Open** in the dialog, **or**
+   - Run in Terminal: `xattr -dr com.apple.quarantine "/Applications/Piano Trainer.app"`
+
+**Requirements:** macOS 13 Ventura or later (Intel or Apple Silicon)
+
+---
+
+## Developer setup
+
+### Prerequisites
+
+| Tool | How to get |
+|------|-----------|
+| Xcode 15+ | [Mac App Store](https://apps.apple.com/app/xcode/id497799835) |
+| Homebrew | `/bin/bash -c "$(curl -fsSL https://raw.githubusercontent.com/Homebrew/install/HEAD/install.sh)"` |
+
+### One-command setup
+
+```bash
+git clone https://github.com/bittonshlomo8-code/piano-trainer-app
+cd piano-trainer-app
+bash scripts/setup.sh
+```
+
+`setup.sh` installs `create-dmg`, `xcodegen`, generates the app icon, and creates `PianoTrainer.xcodeproj`.
+
+### Open in Xcode
+
+```bash
+make open        # generates PianoTrainer.xcodeproj and opens it
+```
+
+Or open `Package.swift` directly in Xcode (no project file needed for development).
+
+### Build & run
+
+```bash
+make build       # → dist/Piano Trainer.app
+make dmg         # → dist/PianoTrainer-1.0.0.dmg
+make test        # run unit tests
+```
+
+---
 
 ## Architecture
 
 ```
 Sources/
-├── PianoTranscriptionKit/   Swift Package library
-│   ├── Models/              MIDINote, TranscriptionRun, Project
-│   ├── AudioProcessing/     AudioExtractor (AVFoundation)
-│   ├── Pipeline/            TranscriptionPipeline protocol + DefaultPipeline
-│   ├── ModelRuntime/        ModelRunner protocol + MockModelRunner
-│   ├── MIDI/                MIDIGenerator + MIDIExporter
-│   └── Storage/             ProjectStore (JSON / file-based)
-└── MacApp/                  SwiftUI macOS app
-    ├── Views/
-    └── ViewModels/
+├── PianoTranscriptionKit/       Swift Package — the library
+│   ├── Models/                  MIDINote · TranscriptionRun · Project
+│   ├── AudioProcessing/         AudioExtractor (AVFoundation)
+│   ├── Pipeline/                TranscriptionPipeline protocol + DefaultPipeline
+│   ├── ModelRuntime/            ModelRunner protocol · BasicPianoModelRunner · MockModelRunner
+│   ├── MIDI/                    MIDIGenerator (SMF) · MIDIExporter
+│   ├── Storage/                 ProjectStore (JSON / file-based)
+│   └── Diagnostics/             PipelineDiagnostics · DiagnosticsReport
+└── MacApp/                      SwiftUI macOS app
+    ├── Views/                   ContentView · ProjectDetailView · WaveformView
+    │                            PianoRollView · PlaybackControlsView · RunStatusPanelView
+    └── ViewModels/              AppViewModel · ProjectViewModel · PlaybackViewModel
 ```
 
-## Requirements
+### Plugging in a real model
 
-- macOS 13+
-- Xcode 15+ (or `swift build`)
-
-## Running
-
-```bash
-swift run MacApp
-```
-
-Or open `Package.swift` in Xcode and run the `MacApp` scheme.
-
-## v1 Status
-
-- [x] Project system — import audio/video, persist projects
-- [x] Audio extraction — AVFoundation-based, mono 44.1kHz WAV
-- [x] Waveform view — PCM downsampled rendering
-- [x] Piano roll — scrollable, multi-run overlay
-- [x] Mock transcription — deterministic plausible output
-- [x] Playback — audio + basic MIDI via AVAudioEngine
-- [x] MIDI export — SMF Type 0
-- [x] Run history — multiple runs per project, compare two at once
-
-## Plugging in a real model
-
-Implement `ModelRunner` and pass it to `DefaultPipeline`:
+Implement `ModelRunner` and add a case to `ProjectViewModel.ModelSelection`:
 
 ```swift
 public protocol ModelRunner: Sendable {
@@ -54,3 +83,51 @@ public protocol ModelRunner: Sendable {
     func transcribe(audioURL: URL) async throws -> [MIDINote]
 }
 ```
+
+`BasicPianoModelRunner` (FFT spectral salience via Accelerate) is the current real implementation.
+`MockModelRunner` generates deterministic fake notes for UI testing.
+
+---
+
+## Releasing
+
+```bash
+make release VERSION=1.2.0
+```
+
+This tags `v1.2.0`, pushes the tag, and triggers the GitHub Actions workflow which:
+1. Builds on `macos-14` with Xcode 15
+2. Generates the app icon
+3. Assembles `Piano Trainer.app` with ad-hoc code signing
+4. Packages `PianoTrainer-1.2.0.dmg`
+5. Creates a GitHub Release and uploads the DMG
+
+---
+
+## Scripts
+
+| Script | Purpose |
+|--------|---------|
+| `scripts/setup.sh` | Install all prerequisites |
+| `scripts/make-icon.swift` | Generate `Resources/AppIcon.icns` from code |
+| `scripts/build-app.sh` | `swift build -c release` + assemble `.app` |
+| `scripts/make-dmg.sh` | Package `.app` → `.dmg` |
+
+---
+
+## Project files
+
+| File | Purpose |
+|------|---------|
+| `Package.swift` | SPM package (authoritative for library + tests) |
+| `project.yml` | xcodegen spec → `PianoTrainer.xcodeproj` |
+| `Makefile` | Developer convenience commands |
+| `Resources/BundleInfo.plist` | Static Info.plist used by `build-app.sh` |
+| `Resources/MacApp.entitlements` | Hardened runtime entitlements |
+| `Resources/AppIcon.icns` | App icon (generated by `make-icon.swift`) |
+
+---
+
+## License
+
+MIT

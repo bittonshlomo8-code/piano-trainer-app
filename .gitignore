@@ -1,9 +1,28 @@
-.DS_Store
+# Build
 .build/
-*.o
-*.d
-*.swp
+dist/
+
+# Xcode
 *.xcworkspace
 xcuserdata/
 DerivedData/
 *.resolved
+*.pbxuser
+*.mode1v3
+*.mode2v3
+*.perspectivev3
+*.xccheckout
+*.xcscmblueprint
+
+# macOS
+.DS_Store
+*.o
+*.d
+*.swp
+
+# Icon source PNGs (keep only .icns)
+Resources/AppIcon.iconset/
+
+# Secrets / local overrides
+*.local
+.env

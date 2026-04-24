@@ -1,0 +1,91 @@
+name: Release
+
+on:
+  push:
+    tags:
+      - 'v[0-9]*.[0-9]*.[0-9]*'
+
+jobs:
+  build-release:
+    name: Build & Package DMG
+    runs-on: macos-14
+
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Select Xcode 15
+        run: |
+          XCODE=$(ls /Applications | grep 'Xcode_15' | sort -V | tail -1)
+          if [ -n "$XCODE" ]; then
+            sudo xcode-select -s "/Applications/$XCODE/Contents/Developer"
+          fi
+          xcodebuild -version
+
+      - name: Get version from tag
+        id: version
+        run: |
+          TAG="${GITHUB_REF#refs/tags/v}"
+          echo "VERSION=$TAG" >> "$GITHUB_OUTPUT"
+          echo "TAG_NAME=v$TAG"  >> "$GITHUB_OUTPUT"
+
+      - name: Update version in BundleInfo.plist
+        run: |
+          /usr/libexec/PlistBuddy -c "Set :CFBundleShortVersionString ${{ steps.version.outputs.VERSION }}" Resources/BundleInfo.plist
+          /usr/libexec/PlistBuddy -c "Set :CFBundleVersion ${{ github.run_number }}" Resources/BundleInfo.plist
+
+      - name: Generate app icon
+        run: swift scripts/make-icon.swift
+
+      - name: Build release .app
+        env:
+          BUILD_PATH: /tmp/pt-build
+        run: bash scripts/build-app.sh
+
+      - name: Install create-dmg
+        run: brew install create-dmg
+
+      - name: Create DMG
+        run: bash scripts/make-dmg.sh
+
+      - name: Collect artifacts
+        run: |
+          ls -lh dist/
+          DMG=$(ls dist/PianoTrainer-*.dmg | head -1)
+          echo "DMG_PATH=$DMG" >> "$GITHUB_ENV"
+
+      - name: Create GitHub Release
+        uses: softprops/action-gh-release@v2
+        with:
+          name: "Piano Trainer ${{ steps.version.outputs.TAG_NAME }}"
+          tag_name: ${{ steps.version.outputs.TAG_NAME }}
+          draft: false
+          prerelease: false
+          files: ${{ env.DMG_PATH }}
+          body: |
+            ## Piano Trainer ${{ steps.version.outputs.TAG_NAME }}
+
+            Native macOS piano transcription workbench.
+
+            ### Installation
+
+            1. Download **PianoTrainer-${{ steps.version.outputs.VERSION }}.dmg**
+            2. Open the DMG, drag **Piano Trainer** to `/Applications`
+            3. **First launch:** right-click → Open (unsigned build — Gatekeeper bypass)
+               Or run once in Terminal:
+               ```
+               xattr -dr com.apple.quarantine "/Applications/Piano Trainer.app"
+               ```
+
+            ### Requirements
+            - macOS 13.0 Ventura or later (Intel or Apple Silicon)
+
+            ### What's in this release
+            - FFT-based piano transcription (BasicSpectral v1) via Accelerate
+            - Mock runner for instant visual demos
+            - Waveform + piano roll visualisation
+            - Side-by-side run comparison
+            - MIDI export (SMF Type 0)
+            - Pipeline diagnostics panel
+        env:
+          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}

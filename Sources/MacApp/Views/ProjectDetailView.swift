@@ -18,12 +18,10 @@ struct ProjectDetailView: View {
 
     var body: some View {
         VStack(spacing: 0) {
-            // Header bar
             headerBar
 
             Divider()
 
-            // Waveform
             WaveformView(
                 audioURL: vm.project.audioFileURL,
                 playheadTime: playback.currentTime,
@@ -34,28 +32,15 @@ struct ProjectDetailView: View {
 
             Divider()
 
-            // Piano roll
-            Group {
-                if vm.project.runs.isEmpty {
-                    emptyState
-                } else {
-                    let annotated = PianoRollView.AnnotatedRun.fromRuns(
-                        vm.project.runs,
-                        selected: vm.selectedRunID,
-                        compare: vm.compareRunID
-                    )
-                    PianoRollView(
-                        runs: annotated,
-                        duration: max(playback.duration, vm.selectedRun?.duration ?? 0),
-                        playheadTime: playback.currentTime
-                    ) { t in playback.seek(to: t) }
-                }
-            }
-            .frame(maxHeight: .infinity)
+            pianoRollArea
+                .frame(maxHeight: .infinity)
 
             Divider()
 
-            // Playback controls
+            RunStatusPanelView(vm: vm)
+
+            Divider()
+
             PlaybackControlsView(vm: playback)
         }
         .onAppear {
@@ -66,6 +51,8 @@ struct ProjectDetailView: View {
             if let run = vm.selectedRun { playback.loadMIDI(notes: run.notes) }
         }
     }
+
+    // MARK: - Header
 
     private var headerBar: some View {
         HStack {
@@ -103,7 +90,6 @@ struct ProjectDetailView: View {
                     .font(.caption)
                     .foregroundStyle(.secondary)
             } else {
-                // Model picker
                 Picker("Model", selection: $vm.modelSelection) {
                     ForEach(ProjectViewModel.ModelSelection.allCases) { sel in
                         Label(sel.rawValue, systemImage: sel.systemImage).tag(sel)
@@ -126,6 +112,36 @@ struct ProjectDetailView: View {
         .padding(.vertical, 10)
     }
 
+    // MARK: - Piano roll / state switching
+
+    @ViewBuilder
+    private var pianoRollArea: some View {
+        if vm.isRunning {
+            runningState
+        } else if vm.project.runs.isEmpty, let error = vm.runError {
+            errorState(message: error)
+        } else if vm.project.runs.isEmpty {
+            emptyState
+        } else if let run = vm.selectedRun, run.noteCount == 0 {
+            noNotesState(run: run)
+        } else {
+            pianoRollContent
+        }
+    }
+
+    private var pianoRollContent: some View {
+        let annotated = PianoRollView.AnnotatedRun.fromRuns(
+            vm.project.runs,
+            selected: vm.selectedRunID,
+            compare: vm.compareRunID
+        )
+        return PianoRollView(
+            runs: annotated,
+            duration: max(playback.duration, vm.selectedRun?.duration ?? 0),
+            playheadTime: playback.currentTime
+        ) { t in playback.seek(to: t) }
+    }
+
     private var emptyState: some View {
         VStack(spacing: 12) {
             Image(systemName: "music.note.list")
@@ -137,6 +153,79 @@ struct ProjectDetailView: View {
                 .font(.subheadline)
                 .foregroundStyle(.secondary)
                 .multilineTextAlignment(.center)
+        }
+        .frame(maxWidth: .infinity, maxHeight: .infinity)
+    }
+
+    private var runningState: some View {
+        VStack(spacing: 14) {
+            ProgressView()
+                .scaleEffect(1.1)
+            Text("Running \(vm.modelSelection.rawValue) pipeline…")
+                .font(.subheadline)
+                .foregroundStyle(.secondary)
+            Text(vm.project.audioFileURL.lastPathComponent)
+                .font(.caption.monospaced())
+                .foregroundStyle(.tertiary)
+        }
+        .frame(maxWidth: .infinity, maxHeight: .infinity)
+    }
+
+    private func errorState(message: String) -> some View {
+        VStack(spacing: 12) {
+            Image(systemName: "exclamationmark.triangle.fill")
+                .font(.system(size: 44))
+                .foregroundStyle(.red)
+            Text("Transcription failed")
+                .font(.title3)
+            Text(message)
+                .font(.caption)
+                .foregroundStyle(.secondary)
+                .multilineTextAlignment(.center)
+                .textSelection(.enabled)
+                .padding(.horizontal, 32)
+            HStack(spacing: 8) {
+                Button {
+                    Task { await vm.runTranscription() }
+                } label: {
+                    Label("Try Again", systemImage: "arrow.clockwise")
+                }
+                Button {
+                    Task { await vm.runDiagnostics() }
+                } label: {
+                    Label("Run Diagnostics", systemImage: "stethoscope")
+                }
+            }
+            .padding(.top, 4)
+        }
+        .frame(maxWidth: .infinity, maxHeight: .infinity)
+    }
+
+    private func noNotesState(run: TranscriptionRun) -> some View {
+        VStack(spacing: 12) {
+            Image(systemName: "waveform.slash")
+                .font(.system(size: 44))
+                .foregroundStyle(.secondary)
+            Text("No notes detected")
+                .font(.title3)
+            Text("The \(run.modelName) pipeline finished but didn't detect any notes. Try a different model or check the audio in the status panel below.")
+                .font(.subheadline)
+                .foregroundStyle(.secondary)
+                .multilineTextAlignment(.center)
+                .padding(.horizontal, 32)
+            HStack(spacing: 8) {
+                Button {
+                    Task { await vm.runTranscription() }
+                } label: {
+                    Label("Run Again", systemImage: "arrow.clockwise")
+                }
+                Button {
+                    Task { await vm.runDiagnostics() }
+                } label: {
+                    Label("Run Diagnostics", systemImage: "stethoscope")
+                }
+            }
+            .padding(.top, 4)
         }
         .frame(maxWidth: .infinity, maxHeight: .infinity)
     }
