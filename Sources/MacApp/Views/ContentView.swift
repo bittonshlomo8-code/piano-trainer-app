@@ -16,11 +16,12 @@ struct ContentView: View {
                 ProjectDetailView(
                     project: project,
                     store: ProjectStore(),
+                    appVM: appVM,
                     onProjectUpdated: { updated in appVM.updateProject(updated) }
                 )
                 .id(project.id)
             } else {
-                WelcomeView()
+                WelcomeView(appVM: appVM)
             }
         }
         .alert("Error", isPresented: Binding(
@@ -35,6 +36,9 @@ struct ContentView: View {
 }
 
 private struct WelcomeView: View {
+    @ObservedObject var appVM: AppViewModel
+    @State private var isImporting = false
+
     var body: some View {
         VStack(spacing: 20) {
             Image(systemName: "pianokeys.inverse")
@@ -44,10 +48,29 @@ private struct WelcomeView: View {
                 .font(.largeTitle.bold())
             Text("Import an audio or video file to begin.")
                 .foregroundStyle(.secondary)
-            Text("Use the + button in the sidebar to import media.")
-                .font(.caption)
-                .foregroundStyle(.tertiary)
+            Button {
+                isImporting = true
+            } label: {
+                Label("Import Media…", systemImage: "square.and.arrow.down.on.square")
+                    .padding(.horizontal, 12)
+                    .padding(.vertical, 4)
+            }
+            .controlSize(.large)
+            .keyboardShortcut("o", modifiers: .command)
+            if !appVM.projects.isEmpty {
+                Text("Or select a project from the sidebar.")
+                    .font(.caption)
+                    .foregroundStyle(.tertiary)
+            }
         }
         .frame(maxWidth: .infinity, maxHeight: .infinity)
+        .fileImporter(
+            isPresented: $isImporting,
+            allowedContentTypes: [.audio, .movie, .mpeg4Movie, .wav, .mp3],
+            allowsMultipleSelection: false
+        ) { result in
+            guard let url = try? result.get().first else { return }
+            Task { await appVM.importMedia(url: url) }
+        }
     }
 }

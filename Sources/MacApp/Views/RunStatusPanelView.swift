@@ -133,7 +133,7 @@ struct RunStatusPanelView: View {
     }
 
     private var runnerLabel: String {
-        vm.modelSelection == .basic ? "Real (BasicPianoModelRunner)" : "Mock (MockModelRunner)"
+        vm.pipelineKind.displayName
     }
 
     // MARK: - Diagnostics

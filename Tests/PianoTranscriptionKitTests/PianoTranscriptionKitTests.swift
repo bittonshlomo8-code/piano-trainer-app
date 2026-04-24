@@ -353,7 +353,7 @@ final class PipelineDiagnosticsTests: XCTestCase {
     func testRunnerAvailableCheckFailsForBlankName() {
         struct NamelessRunner: ModelRunner {
             let name = ""
-            func transcribe(audioURL: URL) async throws -> [MIDINote] { [] }
+            func transcribe(audioURL: URL, progress: PipelineProgressHandler?) async throws -> [MIDINote] { [] }
         }
         let check = PipelineDiagnostics.checkRunnerAvailable(runner: NamelessRunner())
         XCTAssertFalse(check.passed)
@@ -393,6 +393,55 @@ final class PipelineDiagnosticsTests: XCTestCase {
         XCTAssertFalse(report.allPassed, "Expected WAV-missing case to fail overall")
         let wavCheck = report.checks.first { $0.name == "Extracted WAV accessible" }
         XCTAssertEqual(wavCheck?.passed, false)
+    }
+}
+
+final class PipelineKindTests: XCTestCase {
+    func testAvailableKindsBuildRunners() {
+        XCTAssertNotNil(PipelineKind.basicSpectral.makeRunner())
+        XCTAssertNotNil(PipelineKind.mockDemo.makeRunner())
+    }
+
+    func testUnavailableKindReturnsNilRunner() {
+        XCTAssertNil(PipelineKind.neuralOnsetsFrames.makeRunner())
+        XCTAssertFalse(PipelineKind.neuralOnsetsFrames.isAvailable)
+    }
+
+    func testAllKindsExposeDisplayMetadata() {
+        for kind in PipelineKind.allCases {
+            XCTAssertFalse(kind.displayName.isEmpty)
+            XCTAssertFalse(kind.summary.isEmpty)
+            XCTAssertFalse(kind.systemImage.isEmpty)
+        }
+    }
+}
+
+final class PipelineProgressTests: XCTestCase {
+    func testPipelineEmitsProgressUpdates() async throws {
+        actor Collector {
+            var updates: [PipelineProgress] = []
+            func add(_ p: PipelineProgress) { updates.append(p) }
+            func all() -> [PipelineProgress] { updates }
+        }
+        let collector = Collector()
+        let pipeline = DefaultPipeline(runner: MockModelRunner(seed: 3))
+        let url = URL(fileURLWithPath: "/tmp/nonexistent.wav")
+        _ = try await pipeline.run(audioURL: url) { p in
+            Task { await collector.add(p) }
+        }
+        // Wait for trailing async updates to flush
+        try await Task.sleep(nanoseconds: 100_000_000)
+        let updates = await collector.all()
+        XCTAssertFalse(updates.isEmpty, "Pipeline should emit at least one progress update")
+        XCTAssertEqual(updates.last?.fraction, 1.0, "Last update should hit 100%")
+        XCTAssertEqual(updates.last?.stage, .finalizing)
+    }
+
+    func testProgressClampsFraction() {
+        let low  = PipelineProgress(stage: .loading, fraction: -1)
+        let high = PipelineProgress(stage: .finalizing, fraction: 2)
+        XCTAssertEqual(low.fraction, 0)
+        XCTAssertEqual(high.fraction, 1)
     }
 }
 
