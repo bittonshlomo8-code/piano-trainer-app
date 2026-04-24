@@ -14,6 +14,7 @@ let package = Package(
             path: "Sources/PianoTranscriptionKit",
             linkerSettings: [
                 .linkedFramework("AVFoundation"),
+                .linkedFramework("Accelerate"),
                 .linkedFramework("CoreMIDI"),
                 .linkedFramework("AppKit"),
             ]

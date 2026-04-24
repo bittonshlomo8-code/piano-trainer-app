@@ -9,10 +9,10 @@ final class ProjectViewModel: ObservableObject {
     @Published var isRunning = false
     @Published var runError: String?
     @Published var compareRunID: UUID?
+    @Published var modelSelection: ModelSelection = .basic
 
-    private let pipeline: any TranscriptionPipeline
     private let exporter = MIDIExporter()
-    private let store: ProjectStore
+    let store: ProjectStore
     private let onProjectUpdated: (Project) -> Void
 
     var selectedRun: TranscriptionRun? {
@@ -28,7 +28,6 @@ final class ProjectViewModel: ObservableObject {
     init(project: Project, store: ProjectStore, onProjectUpdated: @escaping (Project) -> Void) {
         self.project = project
         self.store = store
-        self.pipeline = DefaultPipeline(runner: MockModelRunner())
         self.onProjectUpdated = onProjectUpdated
         self.selectedRunID = project.latestRun?.id
     }
@@ -37,6 +36,8 @@ final class ProjectViewModel: ObservableObject {
         guard !isRunning else { return }
         isRunning = true
         runError = nil
+
+        let pipeline = DefaultPipeline(runner: modelSelection.makeRunner())
 
         do {
             let run = try await pipeline.run(audioURL: project.audioFileURL)
@@ -61,5 +62,30 @@ final class ProjectViewModel: ObservableObject {
         if compareRunID == run.id { compareRunID = nil }
         try? store.save(project)
         onProjectUpdated(project)
+    }
+}
+
+// MARK: - Model selection
+
+extension ProjectViewModel {
+    enum ModelSelection: String, CaseIterable, Identifiable {
+        case basic = "Real"
+        case mock  = "Mock"
+
+        var id: String { rawValue }
+
+        var systemImage: String {
+            switch self {
+            case .basic: return "waveform"
+            case .mock:  return "die.face.3"
+            }
+        }
+
+        func makeRunner() -> any ModelRunner {
+            switch self {
+            case .basic: return BasicPianoModelRunner()
+            case .mock:  return MockModelRunner()
+            }
+        }
     }
 }

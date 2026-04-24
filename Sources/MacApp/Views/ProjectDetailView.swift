@@ -99,10 +99,21 @@ struct ProjectDetailView: View {
                 ProgressView()
                     .scaleEffect(0.7)
                     .padding(.trailing, 4)
-                Text("Running…")
+                Text("Running \(vm.modelSelection.rawValue)…")
                     .font(.caption)
                     .foregroundStyle(.secondary)
             } else {
+                // Model picker
+                Picker("Model", selection: $vm.modelSelection) {
+                    ForEach(ProjectViewModel.ModelSelection.allCases) { sel in
+                        Label(sel.rawValue, systemImage: sel.systemImage).tag(sel)
+                    }
+                }
+                .pickerStyle(.menu)
+                .labelsHidden()
+                .frame(width: 90)
+                .help("Select transcription model")
+
                 Button {
                     Task { await vm.runTranscription() }
                 } label: {
