@@ -1,6 +1,6 @@
 import Foundation
 
-public struct MIDINote: Codable, Identifiable, Equatable, Hashable {
+public struct MIDINote: Codable, Identifiable, Equatable, Hashable, Sendable {
     public let id: UUID
     public let pitch: Int       // 0–127
     public let onset: Double    // seconds
@@ -23,5 +23,22 @@ public struct MIDINote: Codable, Identifiable, Equatable, Hashable {
 
     public var isBlackKey: Bool {
         [1, 3, 6, 8, 10].contains(pitch % 12)
+    }
+
+    // Equality and hashing are based on musical content, not the randomly-assigned
+    // `id`. Two notes with the same pitch/onset/duration/velocity represent the same
+    // musical event — callers that care about identity can compare `id` explicitly.
+    public static func == (lhs: MIDINote, rhs: MIDINote) -> Bool {
+        lhs.pitch    == rhs.pitch    &&
+        lhs.onset    == rhs.onset    &&
+        lhs.duration == rhs.duration &&
+        lhs.velocity == rhs.velocity
+    }
+
+    public func hash(into hasher: inout Hasher) {
+        hasher.combine(pitch)
+        hasher.combine(onset)
+        hasher.combine(duration)
+        hasher.combine(velocity)
     }
 }

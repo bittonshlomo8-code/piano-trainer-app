@@ -1,0 +1,23 @@
+#!/usr/bin/env bash
+# demucs-wrapper <input_audio> <output_dir>
+#   Splits the input into htdemucs two-stems "other" / "no_other" and writes
+#   them into <output_dir>/htdemucs/<basename>/{other,no_other}.wav.
+#   The Swift app uses `no_other.wav` as the piano-isolated stem.
+set -euo pipefail
+SCRIPT_DIR="$(cd "$(dirname "$0")" && pwd)"
+ROOT_DIR="$(cd "$SCRIPT_DIR/../../.." && pwd)"
+VENV_DIR="$ROOT_DIR/.transcription-venv"
+
+INPUT="$1"
+OUTPUT_DIR="$2"
+mkdir -p "$OUTPUT_DIR"
+
+# htdemucs --two-stems other emits:
+#   no_other.wav  → everything except "other" (= drums + bass + vocals stripped)
+#   other.wav     → just "other"
+# For piano isolation we want everything *except* drums/bass/vocals, which
+# is closer to `no_other.wav` than to a literal piano stem.
+exec "$VENV_DIR/bin/python" -m demucs.separate \
+  -n htdemucs --two-stems other \
+  -o "$OUTPUT_DIR" \
+  "$INPUT"

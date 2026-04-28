@@ -16,20 +16,84 @@ import Accelerate
 /// full pipeline with real audio before a Core ML model is plugged in.
 public final class BasicPianoModelRunner: ModelRunner, @unchecked Sendable {
 
-    public let name = "BasicSpectral v1"
+    /// Tuning knobs exposed to pipelines so they can choose between a fast/loose
+    /// baseline and a stricter piano-focused configuration.
+    public struct Config: Sendable, Equatable {
+        /// Onset threshold as a fraction of the global 95th-percentile salience.
+        public var activationRatio: Float
+        /// Offset threshold as a fraction of the global 95th-percentile salience (hysteresis).
+        public var releaseRatio: Float
+        /// Minimum surviving note duration, in seconds.
+        public var minDuration: Double
+        /// Same-pitch notes closer than this gap are merged together.
+        public var maxMergeGap: Double
+        /// Minimum velocity (0–127) a note must reach to be kept.
+        public var minVelocity: Int
+        /// Display label baked into the runner's `name` so each tuning shows up
+        /// distinctly in run history.
+        public var label: String
+
+        public init(
+            activationRatio: Float,
+            releaseRatio: Float,
+            minDuration: Double,
+            maxMergeGap: Double,
+            minVelocity: Int,
+            label: String
+        ) {
+            self.activationRatio = activationRatio
+            self.releaseRatio = releaseRatio
+            self.minDuration = minDuration
+            self.maxMergeGap = maxMergeGap
+            self.minVelocity = minVelocity
+            self.label = label
+        }
+
+        /// Original loose tuning — keeps the pipeline cheap and shows what the
+        /// raw detector produces.
+        public static let basic = Config(
+            activationRatio: 0.08,
+            releaseRatio: 0.04,
+            minDuration: 0.05,
+            maxMergeGap: 0.08,
+            minVelocity: 1,
+            label: "BasicSpectral v1"
+        )
+
+        /// Stricter onset, wider sustain merge, ghost-note pruning by velocity.
+        public static let pianoFocused = Config(
+            activationRatio: 0.12,
+            releaseRatio: 0.05,
+            minDuration: 0.10,
+            maxMergeGap: 0.20,
+            minVelocity: 24,
+            label: "PianoFocused v1"
+        )
+
+        /// Snapshot suitable for persisting alongside a TranscriptionRun.
+        public var asParameters: [String: String] {
+            [
+                "activationRatio": String(format: "%.4f", activationRatio),
+                "releaseRatio":    String(format: "%.4f", releaseRatio),
+                "minDuration":     String(format: "%.4f", minDuration),
+                "maxMergeGap":     String(format: "%.4f", maxMergeGap),
+                "minVelocity":     "\(minVelocity)",
+                "label":           label,
+            ]
+        }
+    }
+
+    public var name: String { config.label }
+    public let config: Config
 
     // FFT
     private let fftSize  = 4096
     private let hopSize  = 512
     private let sampleRate: Double = 44100
 
-    // Segmentation
-    private let activationRatio: Float = 0.08   // onset: fraction of p95
-    private let releaseRatio:    Float = 0.04   // offset: fraction of p95
-    private let minDuration:     Double = 0.05  // seconds
-    private let maxMergeGap:     Double = 0.08  // seconds
-
-    public init() {}
+    public init(config: Config = .basic) {
+        self.config = config
+    }
 
     public func transcribe(audioURL: URL, progress: PipelineProgressHandler?) async throws -> [MIDINote] {
         try await Task.detached(priority: .userInitiated) { [self] in
@@ -251,8 +315,14 @@ public final class BasicPianoModelRunner: ModelRunner, @unchecked Sendable {
 
         guard p95 > 1e-7 else { return [] }   // effectively silent audio
 
-        let onThreshold  = p95 * activationRatio
-        let offThreshold = p95 * releaseRatio
+        let onThreshold  = p95 * config.activationRatio
+        let offThreshold = p95 * config.releaseRatio
+
+        // Velocity reference: the loudest salience anywhere in the clip.
+        // Dividing by p95 caused even weak sub-harmonic aliases to saturate to
+        // 127 on sparse signals; using the global max keeps the dominant pitch
+        // near 127 and lets weaker pitches fall off proportionally.
+        let globalMax = max(p95, all.last ?? p95)
 
         var notes: [MIDINote] = []
 
@@ -274,13 +344,16 @@ public final class BasicPianoModelRunner: ModelRunner, @unchecked Sendable {
                         let endIdx = release ? i : i + 1
                         let onset  = Double(noteStart!) * frameTime
                         let dur    = Double(endIdx - noteStart!) * frameTime
-                        if dur >= minDuration {
-                            // Velocity: sqrt-scaled against p95 (dynamic range compression)
-                            let vel = min(127, max(1, Int(sqrt(peak / p95) * 90) + 15))
-                            notes.append(MIDINote(pitch: track.pitch,
-                                                  onset: onset,
-                                                  duration: dur,
-                                                  velocity: vel))
+                        if dur >= config.minDuration {
+                            // Velocity: sqrt-scaled against the loudest salience in the clip.
+                            let ratio = min(1, max(0, peak / globalMax))
+                            let vel = min(127, max(1, Int(sqrt(ratio) * 110) + 15))
+                            if vel >= config.minVelocity {
+                                notes.append(MIDINote(pitch: track.pitch,
+                                                      onset: onset,
+                                                      duration: dur,
+                                                      velocity: vel))
+                            }
                         }
                         noteStart = nil
                         peak = 0
@@ -300,7 +373,7 @@ public final class BasicPianoModelRunner: ModelRunner, @unchecked Sendable {
         var cur = notes[0]
         for nxt in notes.dropFirst() {
             if nxt.pitch == cur.pitch,
-               nxt.onset - (cur.onset + cur.duration) <= maxMergeGap {
+               nxt.onset - (cur.onset + cur.duration) <= config.maxMergeGap {
                 cur = MIDINote(pitch: cur.pitch,
                                onset: cur.onset,
                                duration: nxt.onset + nxt.duration - cur.onset,

@@ -14,11 +14,31 @@ final class AppViewModel: ObservableObject {
     /// Per-project last-error message (cleared on successful re-run).
     @Published var projectErrors: [UUID: String] = [:]
 
+    /// Project waiting for the user to pick a pipeline (set right after
+    /// import). When non-nil, the UI presents the pipeline-picker sheet.
+    @Published var pendingPipelineSelectionForProjectID: UUID?
+
+    /// When the picker confirms a choice, the requested pipeline kind lands
+    /// here keyed by project ID. The detail view observes this and triggers
+    /// the run, then clears the entry.
+    @Published var queuedPipelineRun: [UUID: PipelineKind] = [:]
+
+    /// Last-selected pipeline. Persisted to UserDefaults so each new import
+    /// pre-selects the user's previous choice.
+    @Published var lastSelectedPipelineKind: PipelineKind {
+        didSet { Self.persist(lastSelectedPipelineKind) }
+    }
+
     private let store = ProjectStore()
     private let extractor = AudioExtractor()
+    private static let lastPipelineDefaultsKey = "ptk.lastSelectedPipelineKind"
 
     var selectedProject: Project? {
         projects.first { $0.id == selectedProjectID }
+    }
+
+    init() {
+        self.lastSelectedPipelineKind = Self.loadPersistedKind()
     }
 
     func loadProjects() {
@@ -53,6 +73,9 @@ final class AppViewModel: ObservableObject {
             try store.save(project)
             projects.insert(project, at: 0)
             selectedProjectID = project.id
+            // Defer pipeline choice to the user — the picker sheet drives the
+            // first transcription run.
+            pendingPipelineSelectionForProjectID = project.id
         } catch {
             self.error = AppError(message: "Import failed: \(error.localizedDescription)")
         }
@@ -81,6 +104,35 @@ final class AppViewModel: ObservableObject {
             projects[idx] = project
         }
         try? store.save(project)
+    }
+
+    /// Queues a pipeline run for whichever project is currently selected. The
+    /// detail view observes `queuedPipelineRun` and starts the actual run
+    /// against its own `ProjectViewModel`.
+    func queuePipelineRunForCurrentProject(kind: PipelineKind) {
+        guard let id = selectedProjectID else { return }
+        queuedPipelineRun[id] = kind
+    }
+
+    /// Pop the queued pipeline kind for a project. Called by the detail view
+    /// after it kicks off the run so the entry doesn't fire twice.
+    func consumeQueuedPipelineRun(for id: UUID) -> PipelineKind? {
+        queuedPipelineRun.removeValue(forKey: id)
+    }
+
+    // MARK: - Pipeline preference persistence
+
+    private static func loadPersistedKind() -> PipelineKind {
+        if let raw = UserDefaults.standard.string(forKey: lastPipelineDefaultsKey),
+           let kind = PipelineKind(rawValue: raw),
+           PipelineKind.userVisibleCases.contains(kind) {
+            return kind
+        }
+        return PipelineKind.defaultKind
+    }
+
+    private static func persist(_ kind: PipelineKind) {
+        UserDefaults.standard.set(kind.rawValue, forKey: lastPipelineDefaultsKey)
     }
 }
 

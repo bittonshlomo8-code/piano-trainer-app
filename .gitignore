@@ -1,6 +1,14 @@
 # Build
 .build/
 dist/
+Piano Trainer.app/
+
+# Transcription venv + portable Python (created by setup-transcription-deps.sh)
+.transcription-venv/
+.python-portable/
+
+# Claude / local agent state
+.claude/
 
 # Xcode
 *.xcworkspace

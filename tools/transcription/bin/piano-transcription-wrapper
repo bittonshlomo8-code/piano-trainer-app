@@ -1,0 +1,52 @@
+#!/usr/bin/env bash
+# piano-transcription-wrapper <input_audio> <output_midi>
+#   Runs Qiuqiang Kong / ByteDance high-resolution piano transcription.
+#   The model auto-downloads on first run (~500 MB) into the cache dir
+#   ($PIANO_TRANSCRIPTION_DATA_DIR or ~/piano_transcription_inference_data).
+set -euo pipefail
+SCRIPT_DIR="$(cd "$(dirname "$0")" && pwd)"
+ROOT_DIR="$(cd "$SCRIPT_DIR/../../.." && pwd)"
+VENV_DIR="$ROOT_DIR/.transcription-venv"
+
+INPUT="$1"
+OUTPUT_MIDI="$2"
+
+exec "$VENV_DIR/bin/python" - "$INPUT" "$OUTPUT_MIDI" <<'PY'
+import sys
+from pathlib import Path
+
+input_audio = sys.argv[1]
+output_midi = sys.argv[2]
+
+try:
+    from piano_transcription_inference import PianoTranscription, sample_rate
+except Exception as e:
+    print(f"Failed to import piano_transcription_inference: {e}", file=sys.stderr)
+    sys.exit(2)
+
+# `piano_transcription_inference.load_audio` goes through audioread, which
+# requires ffmpeg/gstreamer/CoreAudio backends. We bypass it because we
+# already have librosa+soundfile in the venv and the input is a WAV
+# pre-normalized by the Swift kit's AudioNormalizer.
+try:
+    import librosa
+    audio, _ = librosa.load(input_audio, sr=sample_rate, mono=True)
+except Exception as e:
+    import traceback
+    print(f"audio load failed: {type(e).__name__}: {e}", file=sys.stderr)
+    traceback.print_exc(file=sys.stderr)
+    sys.exit(5)
+
+try:
+    transcriptor = PianoTranscription(device="cpu")
+    transcriptor.transcribe(audio, output_midi)
+except Exception as e:
+    import traceback
+    print(f"piano_transcription_inference failed: {type(e).__name__}: {e}", file=sys.stderr)
+    traceback.print_exc(file=sys.stderr)
+    sys.exit(3)
+
+if not Path(output_midi).exists():
+    print(f"Expected MIDI was not created: {output_midi}", file=sys.stderr)
+    sys.exit(4)
+PY

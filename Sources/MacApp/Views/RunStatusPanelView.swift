@@ -98,7 +98,8 @@ struct RunStatusPanelView: View {
     private var runSection: some View {
         VStack(alignment: .leading, spacing: 4) {
             sectionHeader("Last Run")
-            infoRow(label: "Runner", value: runnerLabel)
+            infoRow(label: "Pipeline", value: pipelineLabel)
+            infoRow(label: "Model", value: modelLabel)
             if let startedAt = vm.runStartedAt {
                 infoRow(label: "Started", value: Self.timeFormatter.string(from: startedAt))
             } else {
@@ -113,6 +114,9 @@ struct RunStatusPanelView: View {
             }
             if let run = vm.selectedRun {
                 infoRow(label: "Notes detected", value: "\(run.noteCount)")
+                if run.usedSourceSeparation {
+                    infoRow(label: "Source separation", value: "yes")
+                }
             } else {
                 infoRow(label: "Notes detected", value: "—")
             }
@@ -132,8 +136,23 @@ struct RunStatusPanelView: View {
         }
     }
 
-    private var runnerLabel: String {
-        vm.pipelineKind.displayName
+    /// Pipeline label for the most recently produced run when one exists,
+    /// otherwise the currently-selected pipeline kind.
+    private var pipelineLabel: String {
+        if let run = vm.selectedRun, !run.pipelineName.isEmpty {
+            return run.pipelineName
+        }
+        return vm.pipelineKind.displayName
+    }
+
+    private var modelLabel: String {
+        if let run = vm.selectedRun {
+            if let v = run.modelVersion, !v.isEmpty {
+                return "\(run.modelName) (\(v))"
+            }
+            return run.modelName
+        }
+        return "—"
     }
 
     // MARK: - Diagnostics

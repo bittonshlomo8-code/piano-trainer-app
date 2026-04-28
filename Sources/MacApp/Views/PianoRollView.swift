@@ -5,6 +5,7 @@ struct PianoRollView: View {
     let runs: [AnnotatedRun]
     let duration: Double
     let playheadTime: Double
+    var filter: NoteDisplayFilter = .defaults
     var onSeek: ((Double) -> Void)?
 
     // Layout constants
@@ -34,10 +35,11 @@ struct PianoRollView: View {
                     }
                     .frame(width: keyWidth + CGFloat(duration) * pxPerSec, height: totalHeight)
 
-                    // Notes for each run
+                    // Notes for each run (filtered for display only)
                     ForEach(runs) { run in
+                        let filtered = filter.apply(to: run.notes)
                         Canvas { ctx, size in
-                            drawNotes(ctx: ctx, run: run, pxPerSec: pxPerSec, totalHeight: totalHeight)
+                            drawNotes(ctx: ctx, notes: filtered, color: run.color, pxPerSec: pxPerSec, totalHeight: totalHeight)
                         }
                         .frame(width: keyWidth + CGFloat(duration) * pxPerSec, height: totalHeight)
                     }
@@ -108,8 +110,8 @@ struct PianoRollView: View {
         }
     }
 
-    private func drawNotes(ctx: GraphicsContext, run: AnnotatedRun, pxPerSec: CGFloat, totalHeight: CGFloat) {
-        for note in run.notes {
+    private func drawNotes(ctx: GraphicsContext, notes: [MIDINote], color: Color, pxPerSec: CGFloat, totalHeight: CGFloat) {
+        for note in notes {
             guard note.pitch >= minPitch && note.pitch <= maxPitch else { continue }
             let row = maxPitch - note.pitch
             let x = keyWidth + CGFloat(note.onset) * pxPerSec
@@ -119,7 +121,7 @@ struct PianoRollView: View {
 
             let alpha = Double(note.velocity) / 127.0 * 0.6 + 0.4
             let rect = CGRect(x: x, y: y, width: w, height: h)
-            ctx.fill(Path(roundedRect: rect, cornerRadius: 2), with: .color(run.color.opacity(alpha)))
+            ctx.fill(Path(roundedRect: rect, cornerRadius: 2), with: .color(color.opacity(alpha)))
         }
     }
 }

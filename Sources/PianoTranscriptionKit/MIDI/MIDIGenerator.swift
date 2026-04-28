@@ -13,26 +13,52 @@ public final class MIDIGenerator {
         // Tempo event
         trackData += midiEvent(delta: 0, event: [0xFF, 0x51, 0x03] + uint24Bytes(microsPerBeat))
 
-        // Build events sorted by time
-        var events: [(tick: Int, data: [UInt8])] = []
+        // Build events sorted by (tick, off-before-on, pitch).
+        //
+        // Off-before-on at the same tick matters when a pitch is re-triggered
+        // with no audible gap: emitting the on first would have the same-tick
+        // off immediately close the new note, leaving a stuck previous note
+        // and a dropped re-trigger. Pitch is the tertiary key for stable
+        // deterministic output.
+        struct Event {
+            let tick: Int
+            let isOff: Bool
+            let pitch: UInt8
+            let bytes: [UInt8]
+        }
+
+        var events: [Event] = []
+        events.reserveCapacity(notes.count * 2)
 
         for note in notes {
-            let onTick = Int(note.onset * Double(ticksPerBeat) * tempo / 60.0)
-            let offTick = Int((note.onset + note.duration) * Double(ticksPerBeat) * tempo / 60.0)
+            // Skip non-positive durations — those are pipeline bugs and would
+            // emit an off-before-on (or simultaneous off/on) for the same
+            // pitch, which is not encodable as a note in SMF.
+            guard note.duration > 0 else { continue }
+            let onTick = max(0, Int(note.onset * Double(ticksPerBeat) * tempo / 60.0))
+            let offTickRaw = Int((note.onset + note.duration) * Double(ticksPerBeat) * tempo / 60.0)
+            // Guarantee strictly-positive note length post-quantization. If
+            // sub-tick durations collapse onTick == offTick, push the off out
+            // by one tick so the note remains audible and distinguishable.
+            let offTick = max(onTick + 1, offTickRaw)
             let vel = UInt8(max(1, min(127, note.velocity)))
             let pitch = UInt8(max(0, min(127, note.pitch)))
 
-            events.append((onTick,  [0x90, pitch, vel]))   // note on
-            events.append((offTick, [0x80, pitch, 0x00]))  // note off
+            events.append(Event(tick: onTick,  isOff: false, pitch: pitch, bytes: [0x90, pitch, vel]))
+            events.append(Event(tick: offTick, isOff: true,  pitch: pitch, bytes: [0x80, pitch, 0x00]))
         }
 
-        events.sort { $0.tick < $1.tick }
+        events.sort { a, b in
+            if a.tick != b.tick { return a.tick < b.tick }
+            if a.isOff != b.isOff { return a.isOff }   // off before on at same tick
+            return a.pitch < b.pitch
+        }
 
         var prevTick = 0
         for evt in events {
             let delta = max(0, evt.tick - prevTick)
             prevTick = evt.tick
-            trackData += midiEvent(delta: delta, event: evt.data)
+            trackData += midiEvent(delta: delta, event: evt.bytes)
         }
 
         // End-of-track
