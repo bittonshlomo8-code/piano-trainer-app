@@ -11,7 +11,7 @@ final class ProjectViewModel: ObservableObject {
     @Published var isRunning = false
     @Published var runError: String?
     @Published var compareRunID: UUID?
-    @Published var pipelineKind: PipelineKind = .basicSpectral
+    @Published var pipelineKind: PipelineKind = .defaultKind
 
     // Live progress (published during an active pipeline run)
     @Published var progress: PipelineProgress?
@@ -52,11 +52,15 @@ final class ProjectViewModel: ObservableObject {
         self.selectedRunID = project.latestRun?.id
     }
 
-    func runTranscription() async {
+    func runTranscription(using kind: PipelineKind? = nil) async {
         guard !isRunning else { return }
-        let kind = pipelineKind
-        guard let runner = kind.makeRunner() else {
-            runError = "\(kind.displayName) is not yet available. Pick another pipeline."
+        let chosen = kind ?? pipelineKind
+        if let kind { pipelineKind = kind }
+        guard let pipeline = PipelineRegistry.shared.makePipeline(chosen) else {
+            let reason = PipelineRegistry.shared.unavailableReason(chosen)
+                ?? "\(chosen.displayName) is not yet available. Pick another pipeline."
+            runError = reason
+            onRunError?(project.id, reason)
             return
         }
 
@@ -68,7 +72,6 @@ final class ProjectViewModel: ObservableObject {
         runStartedAt = Date()
         runDurationSeconds = nil
 
-        let pipeline = DefaultPipeline(runner: runner)
         let start = Date()
         let audioURL = project.audioFileURL
 
@@ -138,7 +141,7 @@ final class ProjectViewModel: ObservableObject {
         guard !isDiagnosticsRunning else { return }
         isDiagnosticsRunning = true
         let snapshot = project
-        let runner = pipelineKind.makeRunner() ?? BasicPianoModelRunner()
+        let runner = PipelineRegistry.shared.makeRunner(pipelineKind) ?? BasicPianoModelRunner()
         let report = await PipelineDiagnostics.run(project: snapshot, store: store, runner: runner)
         diagnosticsReport = report
         isDiagnosticsRunning = false

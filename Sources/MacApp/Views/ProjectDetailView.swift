@@ -9,6 +9,28 @@ struct ProjectDetailView: View {
 
     @StateObject private var vm: ProjectViewModel
     @StateObject private var playback = PlaybackViewModel()
+    @State private var filter: NoteDisplayFilter = .defaults
+
+    // Visualization toggle — falling-note (Synthesia-style) vs. piano-roll grid.
+    @State private var visualization: Visualization = .falling
+
+    enum Visualization: String, CaseIterable, Identifiable {
+        case falling, roll
+        var id: String { rawValue }
+        var label: String { self == .falling ? "Falling Notes" : "Piano Roll" }
+        var icon: String { self == .falling ? "arrow.down.square" : "rectangle.split.3x3" }
+    }
+
+    // Future piano-isolation toggles (placeholders, disabled until separation lands).
+    @State private var isolationOn = false
+    @State private var muteBackgroundInstruments = false
+    @State private var reduceBackgroundNoise = false
+
+    @State private var pendingDelete = false
+
+    // Re-run picker
+    @State private var showRerunPicker = false
+    @State private var rerunSelection: PipelineKind = .basicFast
 
     init(project: Project,
          store: ProjectStore,
@@ -21,10 +43,85 @@ struct ProjectDetailView: View {
         _vm = StateObject(wrappedValue: ProjectViewModel(project: project, store: store, onProjectUpdated: onProjectUpdated))
     }
 
-    var body: some View {
-        VStack(spacing: 0) {
-            headerBar
+    /// Picks up any pipeline run queued by the import picker (or other entry
+    /// point) and starts it against the current project's view model. Clears
+    /// the queue entry so the run only fires once.
+    private func consumeQueuedRunIfNeeded() {
+        guard let kind = appVM.consumeQueuedPipelineRun(for: vm.project.id) else { return }
+        Task { await vm.runTranscription(using: kind) }
+    }
 
+    /// Public entry point used by the inspector's "Run again with different
+    /// pipeline" button.
+    func presentRerunPicker() {
+        rerunSelection = vm.pipelineKind
+        showRerunPicker = true
+    }
+
+    var body: some View {
+        HStack(spacing: 0) {
+            mainColumn
+                .frame(maxWidth: .infinity)
+
+            Divider()
+
+            InspectorSidebarView(
+                vm: vm,
+                playback: playback,
+                filter: $filter,
+                isolationOn: $isolationOn,
+                muteBackgroundInstruments: $muteBackgroundInstruments,
+                reduceBackgroundNoise: $reduceBackgroundNoise,
+                onBack: { appVM.selectedProjectID = nil },
+                onDelete: { pendingDelete = true },
+                onRequestRerunPicker: { presentRerunPicker() }
+            )
+        }
+        .onAppear {
+            playback.loadAudio(url: vm.project.audioFileURL)
+            if let run = vm.selectedRun { playback.loadMIDI(notes: run.notes) }
+            vm.onRunningChanged = { [weak appVM] id, running in
+                appVM?.setRunning(running, for: id)
+            }
+            vm.onRunError = { [weak appVM] id, message in
+                appVM?.setProjectError(message, for: id)
+            }
+            consumeQueuedRunIfNeeded()
+        }
+        .onChange(of: vm.selectedRunID) { _ in
+            if let run = vm.selectedRun { playback.loadMIDI(notes: run.notes) }
+        }
+        .onChange(of: appVM.queuedPipelineRun) { _ in
+            consumeQueuedRunIfNeeded()
+        }
+        .sheet(isPresented: $showRerunPicker) {
+            PipelinePickerSheet(
+                projectName: vm.project.name,
+                selection: $rerunSelection,
+                title: "Run again with different pipeline",
+                confirmLabel: "Run Again",
+                onConfirm: { kind in
+                    showRerunPicker = false
+                    appVM.lastSelectedPipelineKind = kind
+                    Task { await vm.runTranscription(using: kind) }
+                },
+                onCancel: { showRerunPicker = false }
+            )
+        }
+        .alert("Delete \(vm.project.name)?", isPresented: $pendingDelete) {
+            Button("Cancel", role: .cancel) { }
+            Button("Delete", role: .destructive) {
+                appVM.delete(vm.project)
+            }
+        } message: {
+            Text("This removes the project, all transcription runs, and the extracted audio file.")
+        }
+    }
+
+    // MARK: - Main column
+
+    private var mainColumn: some View {
+        VStack(spacing: 0) {
             if vm.isRunning {
                 progressBanner
             }
@@ -47,101 +144,7 @@ struct ProjectDetailView: View {
 
             pianoRollArea
                 .frame(maxHeight: .infinity)
-
-            Divider()
-
-            RunStatusPanelView(vm: vm)
-
-            Divider()
-
-            PlaybackControlsView(vm: playback)
         }
-        .onAppear {
-            playback.loadAudio(url: vm.project.audioFileURL)
-            if let run = vm.selectedRun { playback.loadMIDI(notes: run.notes) }
-            vm.onRunningChanged = { [weak appVM] id, running in
-                appVM?.setRunning(running, for: id)
-            }
-            vm.onRunError = { [weak appVM] id, message in
-                appVM?.setProjectError(message, for: id)
-            }
-        }
-        .onChange(of: vm.selectedRunID) { _ in
-            if let run = vm.selectedRun { playback.loadMIDI(notes: run.notes) }
-        }
-    }
-
-    // MARK: - Header
-
-    private var headerBar: some View {
-        HStack(spacing: 10) {
-            VStack(alignment: .leading, spacing: 2) {
-                Text(vm.project.name)
-                    .font(.title3.bold())
-                HStack(spacing: 6) {
-                    Text(vm.project.audioFileURL.lastPathComponent)
-                        .font(.caption)
-                        .foregroundStyle(.secondary)
-                    if let run = vm.selectedRun {
-                        Text("·").foregroundStyle(.secondary)
-                        Circle().fill(.blue).frame(width: 6, height: 6)
-                        Text(run.label)
-                            .font(.caption)
-                            .foregroundStyle(.blue)
-                        if let compareRun = vm.compareRun {
-                            Text("·").foregroundStyle(.secondary)
-                            Circle().fill(.green).frame(width: 6, height: 6)
-                            Text(compareRun.label)
-                                .font(.caption)
-                                .foregroundStyle(.green)
-                        }
-                    }
-                }
-            }
-            Spacer()
-
-            pipelinePicker
-
-            Button {
-                Task { await vm.runTranscription() }
-            } label: {
-                Label(vm.project.runs.isEmpty ? "Run Transcription" : "Run Again",
-                      systemImage: "waveform.badge.magnifyingglass")
-            }
-            .keyboardShortcut("r", modifiers: .command)
-            .disabled(vm.isRunning || !vm.pipelineKind.isAvailable)
-            .help(vm.pipelineKind.isAvailable ? "Run the selected pipeline (⌘R)" : vm.pipelineKind.summary)
-
-            Button {
-                if let run = vm.selectedRun { _ = vm.promptExportMIDI(for: run) }
-            } label: {
-                Label("Download MIDI", systemImage: "square.and.arrow.down")
-            }
-            .keyboardShortcut("e", modifiers: .command)
-            .disabled(vm.selectedRun == nil || vm.isRunning)
-            .help(vm.selectedRun == nil
-                  ? "Finish a transcription run to enable MIDI download"
-                  : "Save the selected run's MIDI file (⌘E)")
-        }
-        .padding(.horizontal, 16)
-        .padding(.vertical, 10)
-    }
-
-    private var pipelinePicker: some View {
-        Picker("Pipeline", selection: $vm.pipelineKind) {
-            ForEach(PipelineKind.allCases) { kind in
-                HStack {
-                    Image(systemName: kind.systemImage)
-                    Text(kind.displayName + (kind.isAvailable ? "" : " (coming soon)"))
-                }
-                .tag(kind)
-            }
-        }
-        .pickerStyle(.menu)
-        .labelsHidden()
-        .frame(width: 200)
-        .help(vm.pipelineKind.summary)
-        .disabled(vm.isRunning)
     }
 
     // MARK: - Runs strip
@@ -166,15 +169,18 @@ struct ProjectDetailView: View {
     private func runPill(run: TranscriptionRun) -> some View {
         let isSelected = vm.selectedRunID == run.id
         let isCompare = vm.compareRunID == run.id
+        let pipelineLabel = run.pipelineName.isEmpty ? run.modelName : run.pipelineName
         HStack(spacing: 6) {
             Circle()
                 .fill(isSelected ? Color.blue : (isCompare ? Color.green : Color.clear))
                 .frame(width: 6, height: 6)
-            Text(run.label)
-                .font(.caption)
-            Text("· \(run.noteCount)n")
-                .font(.caption2.monospacedDigit())
-                .foregroundStyle(.secondary)
+            VStack(alignment: .leading, spacing: 1) {
+                Text(pipelineLabel)
+                    .font(.caption.weight(.medium))
+                Text("\(run.label) · \(run.noteCount)n")
+                    .font(.caption2.monospacedDigit())
+                    .foregroundStyle(.secondary)
+            }
         }
         .padding(.horizontal, 10)
         .padding(.vertical, 5)
@@ -196,11 +202,13 @@ struct ProjectDetailView: View {
                 vm.compareRunID = (vm.compareRunID == run.id) ? nil : run.id
             }
             Divider()
+            Button("Run again with different pipeline…") { presentRerunPicker() }
+            Divider()
             Button("Download MIDI…") { _ = vm.promptExportMIDI(for: run) }
             Divider()
             Button("Delete Run", role: .destructive) { vm.deleteRun(run) }
         }
-        .help("\(run.modelName) · \(run.noteCount) notes · right-click for actions")
+        .help("\(pipelineLabel) · \(run.modelName) · \(run.noteCount) notes · right-click for actions")
     }
 
     // MARK: - Progress
@@ -247,8 +255,42 @@ struct ProjectDetailView: View {
         } else if let run = vm.selectedRun, run.noteCount == 0 {
             noNotesState(run: run)
         } else {
-            pianoRollContent
+            VStack(spacing: 0) {
+                visualizationToggle
+                Divider()
+                Group {
+                    switch visualization {
+                    case .falling: fallingContent
+                    case .roll:    pianoRollContent
+                    }
+                }
+            }
         }
+    }
+
+    private var visualizationToggle: some View {
+        HStack(spacing: 8) {
+            Picker("Visualization", selection: $visualization) {
+                ForEach(Visualization.allCases) { v in
+                    Label(v.label, systemImage: v.icon).tag(v)
+                }
+            }
+            .pickerStyle(.segmented)
+            .labelsHidden()
+            .frame(maxWidth: 320)
+            Spacer()
+        }
+        .padding(.horizontal, 12)
+        .padding(.vertical, 6)
+    }
+
+    private var fallingContent: some View {
+        // Drive the falling visualizer from the cleaned/repaired notes — the
+        // same array that drives playback and export.
+        FallingNoteView(
+            notes: vm.selectedRun?.notes ?? [],
+            playheadTime: playback.currentTime
+        )
     }
 
     private var pianoRollContent: some View {
@@ -260,7 +302,8 @@ struct ProjectDetailView: View {
         return PianoRollView(
             runs: annotated,
             duration: max(playback.duration, vm.selectedRun?.duration ?? 0),
-            playheadTime: playback.currentTime
+            playheadTime: playback.currentTime,
+            filter: filter
         ) { t in playback.seek(to: t) }
     }
 
@@ -271,7 +314,7 @@ struct ProjectDetailView: View {
                 .foregroundStyle(.secondary)
             Text("No transcription runs yet")
                 .font(.title3)
-            Text("Press ⌘R or click \"Run Transcription\" to analyze this audio.")
+            Text("Click \"Run Transcription\" in the sidebar to analyze this audio.")
                 .font(.subheadline)
                 .foregroundStyle(.secondary)
                 .multilineTextAlignment(.center)
@@ -330,7 +373,7 @@ struct ProjectDetailView: View {
                 .foregroundStyle(.secondary)
             Text("No notes detected")
                 .font(.title3)
-            Text("The \(run.modelName) pipeline finished but didn't detect any notes. Try a different pipeline or check the audio in the status panel below.")
+            Text("The \(run.modelName) pipeline finished but didn't detect any notes. Try a different pipeline from the sidebar.")
                 .font(.subheadline)
                 .foregroundStyle(.secondary)
                 .multilineTextAlignment(.center)

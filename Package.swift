@@ -23,6 +23,11 @@ let package = Package(
             name: "MacApp",
             dependencies: ["PianoTranscriptionKit"],
             path: "Sources/MacApp",
+            resources: [
+                // Bundled General-MIDI SoundFont used by AVAudioUnitSampler for
+                // realistic piano playback. Distributed with the app.
+                .copy("Resources/PianoSoundFont.sf2"),
+            ],
             linkerSettings: [
                 .linkedFramework("AVFoundation"),
                 .linkedFramework("AppKit"),

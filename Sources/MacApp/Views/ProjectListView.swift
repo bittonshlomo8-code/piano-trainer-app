@@ -14,55 +14,6 @@ struct ProjectListView: View {
         Bundle.main.object(forInfoDictionaryKey: "CFBundleVersion") as? String ?? "?"
     }
 
-    var body: some View {
-        VStack(spacing: 0) {
-            Button {
-                isImporting = true
-            } label: {
-                Label("Import Media…", systemImage: "plus.circle.fill")
-                    .frame(maxWidth: .infinity)
-                    .padding(.vertical, 4)
-            }
-            .buttonStyle(.borderedProminent)
-            .controlSize(.regular)
-            .keyboardShortcut("o", modifiers: .command)
-            .padding(.horizontal, 10)
-            .padding(.top, 10)
-            .padding(.bottom, 6)
-
-            if appVM.projects.isEmpty {
-                VStack(spacing: 8) {
-                    Spacer()
-                    Image(systemName: "square.and.arrow.down")
-                        .font(.title2)
-                        .foregroundStyle(.tertiary)
-                    Text("No songs yet")
-                        .font(.subheadline)
-                        .foregroundStyle(.secondary)
-                    Text("Import audio or video to start.")
-                        .font(.caption)
-                        .foregroundStyle(.tertiary)
-                        .multilineTextAlignment(.center)
-                    Spacer()
-                }
-                .frame(maxWidth: .infinity)
-                .padding(.horizontal, 12)
-            } else {
-                projectsList
-            }
-
-            buildStamp
-        }
-        .fileImporter(
-            isPresented: $isImporting,
-            allowedContentTypes: [.audio, .movie, .mpeg4Movie, .wav, .mp3],
-            allowsMultipleSelection: false
-        ) { result in
-            guard let url = try? result.get().first else { return }
-            Task { await appVM.importMedia(url: url) }
-        }
-    }
-
     private var buildStamp: some View {
         HStack(spacing: 4) {
             Text("v\(appVersion)")
@@ -82,23 +33,67 @@ struct ProjectListView: View {
         .help("App version and build. Share the build number so we know we're looking at the same binary.")
     }
 
-    private var projectsList: some View {
+    var body: some View {
         List(selection: $appVM.selectedProjectID) {
-            Section(header: sectionHeader) {
-                ForEach(appVM.projects) { project in
-                    ProjectRowView(
-                        project: project,
-                        isRunning: appVM.runningProjectIDs.contains(project.id),
-                        lastError: appVM.projectErrors[project.id]
-                    )
-                    .tag(project.id)
-                    .contextMenu {
-                        Button("Delete", role: .destructive) { appVM.delete(project) }
+            if appVM.projects.isEmpty {
+                VStack(spacing: 8) {
+                    Image(systemName: "square.and.arrow.down")
+                        .font(.title2)
+                        .foregroundStyle(.tertiary)
+                    Text("No songs yet")
+                        .font(.subheadline)
+                        .foregroundStyle(.secondary)
+                    Text("Import audio or video to start.")
+                        .font(.caption)
+                        .foregroundStyle(.tertiary)
+                        .multilineTextAlignment(.center)
+                }
+                .frame(maxWidth: .infinity)
+                .padding(.vertical, 24)
+            } else {
+                Section(header: sectionHeader) {
+                    ForEach(appVM.projects) { project in
+                        ProjectRowView(
+                            project: project,
+                            isRunning: appVM.runningProjectIDs.contains(project.id),
+                            lastError: appVM.projectErrors[project.id]
+                        )
+                        .tag(project.id)
+                        .contextMenu {
+                            Button("Delete", role: .destructive) { appVM.delete(project) }
+                        }
                     }
                 }
             }
         }
         .listStyle(.sidebar)
+        .safeAreaInset(edge: .bottom, spacing: 0) {
+            buildStamp
+        }
+        .safeAreaInset(edge: .top, spacing: 0) {
+            Button {
+                isImporting = true
+            } label: {
+                Label("Import Media…", systemImage: "plus.circle.fill")
+                    .frame(maxWidth: .infinity)
+                    .padding(.vertical, 4)
+            }
+            .buttonStyle(.borderedProminent)
+            .controlSize(.regular)
+            .keyboardShortcut("o", modifiers: .command)
+            .padding(.horizontal, 10)
+            .padding(.top, 10)
+            .padding(.bottom, 6)
+            .background(.bar)
+        }
+        .fileImporter(
+            isPresented: $isImporting,
+            allowedContentTypes: [.audio, .movie, .mpeg4Movie, .wav, .mp3],
+            allowsMultipleSelection: false
+        ) { result in
+            guard let url = try? result.get().first else { return }
+            Task { await appVM.importMedia(url: url) }
+        }
     }
 
     private var sectionHeader: some View {

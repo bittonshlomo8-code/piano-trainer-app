@@ -26,9 +26,31 @@ cp "$RELEASE_BIN" "$BUNDLE_DIR/Contents/MacOS/$BINARY_NAME"
 chmod +x "$BUNDLE_DIR/Contents/MacOS/$BINARY_NAME"
 cp "$ROOT/Resources/BundleInfo.plist" "$BUNDLE_DIR/Contents/Info.plist"
 
+# Stamp a unique build number so local rebuilds are visibly distinct in the UI.
+# Format: YYYYMMDDHHMM. CI releases override this with the workflow run number.
+BUILD_NUMBER="${BUILD_NUMBER:-$(date +%Y%m%d%H%M)}"
+/usr/libexec/PlistBuddy -c "Set :CFBundleVersion $BUILD_NUMBER" "$BUNDLE_DIR/Contents/Info.plist"
+echo "==> Stamped CFBundleVersion = $BUILD_NUMBER"
+
 # Copy icon if present
 if [[ -f "$ROOT/Resources/AppIcon.icns" ]]; then
     cp "$ROOT/Resources/AppIcon.icns" "$BUNDLE_DIR/Contents/Resources/AppIcon.icns"
+fi
+
+# Bundled piano SoundFont — copied directly to Contents/Resources so the app
+# can locate it via Bundle.main.url(forResource:withExtension:). The file is
+# also discoverable via Bundle.module during `swift run` thanks to the
+# resource declaration in Package.swift.
+if [[ -f "$ROOT/Sources/MacApp/Resources/PianoSoundFont.sf2" ]]; then
+    cp "$ROOT/Sources/MacApp/Resources/PianoSoundFont.sf2" \
+       "$BUNDLE_DIR/Contents/Resources/PianoSoundFont.sf2"
+fi
+
+# Copy the SwiftPM-generated resource bundle (if any) alongside the binary so
+# Bundle.module continues to resolve when the app runs from inside the bundle.
+RESOURCE_BUNDLE="$BUILD_PATH/release/MacApp_MacApp.bundle"
+if [[ -d "$RESOURCE_BUNDLE" ]]; then
+    cp -R "$RESOURCE_BUNDLE" "$BUNDLE_DIR/Contents/Resources/"
 fi
 
 # ── 3. Ad-hoc code sign (no certificate required; lets Gatekeeper identify it) ─
